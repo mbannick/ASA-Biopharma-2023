@@ -1,0 +1,129 @@
+---
+title: "Practical 1: Basic Covariate Adjustment (KEY)"
+subtitle: "ASA Biopharmaceutical Section Regulatory-Industry Statistics Workshop"
+author: Ting Ye, Marlena Bannick, Yanyao Yi
+output: 
+  html_notebook:
+    theme: paper
+---
+
+Download and Install the `RobinCar` package by running the code below.
+
+```{r}
+devtools::install_github("mbannick/RobinCar")
+```
+
+We will also use the `dplyr` and `fastDummies` packages for data manipulation.
+
+```{r}
+library(dplyr)
+library(fastDummies)
+```
+
+### Learning Objectives
+
+In this practical, we will generate simulated data according to stratified permuted block randomization and use various methods to perform covariate adjustment. For some questions, you will code the methods yourself. For others, you will use the `RobinCar` package to obtain results.
+
+**Objectives:**
+
+* Understand covariate adjustment methods using linear and non-linear models.
+* Identify when working models satisfy the prediction unbiasedness condition.
+* Recognize the importance of using correct standard error estimates that account for covariate-adaptive randomization.
+
+### Setup
+
+We will use the following simulated data for covariates, strata, and treatment assignments. For different parts of the question, the outcome variable will be generated differently.
+
+```{r}
+# Set the total sample size
+n <- 500
+
+# Create continuous covariates
+X <- runif(n)
+
+# Create strata variable as a categorized version of X1
+Z <- cut(X, breaks=c(0, 0.25, 0.5, 0.75, 1.0))
+Z <- fastDummies::dummy_cols(Z) %>%
+     dplyr::mutate(across(where(is.numeric), as.factor))
+
+# Create treatment assignments
+A <- RobinCar::car_pb(
+  z=Z[, 2:5], 
+  trt_label=c(0, 1),
+  trt_alc=c(1/3, 2/3), 
+  blocksize=6L)
+
+# Put dataset together
+df <- tibble(
+  A=A, X, Z1=Z[,2], Z2=Z[,3], Z3=Z[,4], Z4=Z[,5]
+)
+strata_cols <- c("Z1", "Z2", "Z3", "Z4")
+```
+
+### Question 1. Linear Adjustment
+
+Generate simulated data based on a linear model.
+```{r}
+df$Y1 <- (df$A) * (df$X**2) + (1-df$A) * (df$X)
+```
+
+(a) Use base R to fit the linear model $Y ~ A + X$ and obtain the model-based SE for the treatment effect $E(Y_1|A=1) - E(Y_1|A=0)$ under simple randomization.
+
+Using base R,
+```{r}
+# Fit the linear model
+mod1a <- with(df, lm(Y1 ~ A + X))
+
+# Estimate of treatment effect
+coef(mod)["A"]
+
+# Model-based SE for treatment effect
+sqrt(vcov(mod)["A", "A"])
+```
+
+(b) Use `RobinCar` to fit the linear model $Y ~ A + X$ and obtain robust (to model misspecification) SE for the treatment effect under simple randomization.
+
+```{r}
+mod1b <- RobinCar::robincar_glm(
+  df=df, 
+  treat_col="A", 
+  response_col="Y1",
+  covariate_cols="X",
+  adj_method="homogeneous",
+  contrast_h="diff")
+```
+
+### Question 2. G-Computation with Logistic Working Model
+
+Generate simulated data based with binary outcome.
+```{r}
+# Generate mean -- logistic model does not hold
+expit <- function(x) exp(x) / (1+exp(x))
+prob <- df$A * (0.5*df$X + 0.25*df$X**2) + (1-df$A) * expit(df$X + df$X**2)
+
+# Generate outcome variable based on probability
+df$Y2 <- rbinom(n=nrow(df), size=1, prob=prob)
+```
+
+(a) Code your own G-computation estimator following FDA guidance, using the working model `glm(Y ~ X + Z)`.
+
+```{r}
+
+```
+
+(b) Use `RobinCar` to get mean estimates for both treatment arms, and obtain estimate and CI for the risk difference. (Hint: you can use the "formula" specification for `robincar_glm` and leave out one strata variable, if you include an intercept.)
+
+```{r}
+mod2b <- RobinCar::robincar_glm(
+  df=df,
+  treat_col="A", 
+  response_col="Y2",
+  formula="Y2 ~ A + X + Z2 + Z3 + Z4")
+```
+
+(c) Use `RobinCar` to get an estimate and CI for an unconditional odds ratio. Please construct the estimate and CI on the log odds ratio first, and then exponentiate for a better asymptotic approximation.
+
+### Question 3. AIPW with Negative Binomial Working Model
+
+### Question 4. Comparison of Standard Error under Simple versus Covariate-Adaptive Randomization
+

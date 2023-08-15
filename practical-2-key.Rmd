@@ -1,0 +1,28 @@
+---
+title: "Practical 2: Advanced Covariate Adjustment (KEY)"
+subtitle: "ASA Biopharmaceutical Section Regulatory-Industry Statistics Workshop"
+author: Ting Ye, Marlena Bannick, Yanyao Yi
+output: 
+  html_notebook:
+    theme: paper
+---
+
+Download and Install the `RobinCar` package by running the code below.
+
+```{r}
+devtools::install_github("mbannick/RobinCar")
+```
+
+### Learning Objectives
+
+In this practical, we will apply more advanced covariate adjustment methods to real data sets. In this practical, you will use the `RobinCar` package to apply ANHECOVA, joint calibration, and robust survival methods.
+
+**Objectives:**
+
+### Question 1. ANHECOVA
+
+### Question 2. Joint Calibration
+
+### Question 3. Robust Adjustment for Survival Data
+
+
