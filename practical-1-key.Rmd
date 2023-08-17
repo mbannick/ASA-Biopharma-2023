@@ -1,8 +1,11 @@
 ---
-title: "Practical 1: Basic Covariate Adjustment (KEY)"
+title: 'Practical 1: Basic Covariate Adjustment (KEY)'
+author: "Ting Ye, Marlena Bannick, Yanyao Yi"
 subtitle: "ASA Biopharmaceutical Section Regulatory-Industry Statistics Workshop"
-author: Ting Ye, Marlena Bannick, Yanyao Yi
-output: 
+output:
+  html_document:
+    df_print: paged
+    theme: paper
   html_notebook:
     theme: paper
 ---
@@ -10,14 +13,18 @@ output:
 Download and Install the `RobinCar` package by running the code below.
 
 ```{r}
-devtools::install_github("mbannick/RobinCar")
+# devtools::install_github("mbannick/RobinCar")
 ```
 
-We will also use the `dplyr` and `fastDummies` packages for data manipulation.
+We will also use the `dplyr` and `fastDummies` packages for data manipulation, and `MASS` for simulating negative binomial outcomes and fitting negative binomial GLMs.
 
 ```{r}
 library(dplyr)
 library(fastDummies)
+library(MASS)
+
+# set a reproducible seed
+set.seed(2023)
 ```
 
 ### Learning Objectives
@@ -43,46 +50,45 @@ X <- runif(n)
 
 # Create strata variable as a categorized version of X1
 Z <- cut(X, breaks=c(0, 0.25, 0.5, 0.75, 1.0))
-Z <- fastDummies::dummy_cols(Z) %>%
-     dplyr::mutate(across(where(is.numeric), as.factor))
+Zfactors <- fastDummies::dummy_cols(Z) %>%
+            dplyr::mutate(across(where(is.numeric), as.factor))
 
 # Create treatment assignments
 A <- RobinCar::car_pb(
-  z=Z[, 2:5], 
+  z=Zfactors[, 2:5], 
   trt_label=c(0, 1),
   trt_alc=c(1/3, 2/3), 
   blocksize=6L)
 
 # Put dataset together
 df <- tibble(
-  A=A, X, Z1=Z[,2], Z2=Z[,3], Z3=Z[,4], Z4=Z[,5]
-)
-strata_cols <- c("Z1", "Z2", "Z3", "Z4")
+  A=A, X=X, Z=Z)
 ```
 
 ### Question 1. Linear Adjustment
 
-Generate simulated data based on a linear model.
+Generate simulated data based on a linear model with Gaussian errors.
 ```{r}
-df$Y1 <- (df$A) * (df$X**2) + (1-df$A) * (df$X)
+df$Y1 <- (df$A) * (df$X**2) + (1-df$A) * (df$X) + rnorm(n)
 ```
 
-(a) Use base R to fit the linear model $Y ~ A + X$ and obtain the model-based SE for the treatment effect $E(Y_1|A=1) - E(Y_1|A=0)$ under simple randomization.
+(a) Use base R to fit the linear model $Y \sim A + X$ and obtain the model-based SE for the treatment effect $E(Y_1|A=1) - E(Y_1|A=0)$ under simple randomization.
 
-Using base R,
+*ANSWER*
 ```{r}
 # Fit the linear model
 mod1a <- with(df, lm(Y1 ~ A + X))
 
 # Estimate of treatment effect
-coef(mod)["A"]
+coef(mod1a)["A"]
 
 # Model-based SE for treatment effect
-sqrt(vcov(mod)["A", "A"])
+sqrt(vcov(mod1a)["A", "A"])
 ```
 
-(b) Use `RobinCar` to fit the linear model $Y ~ A + X$ and obtain robust (to model misspecification) SE for the treatment effect under simple randomization.
+(b) Use `RobinCar` to fit the linear model $Y \sim A + X$ and obtain robust (to model misspecification) SE for the treatment effect under simple randomization.
 
+*ANSWER*
 ```{r}
 mod1b <- RobinCar::robincar_glm(
   df=df, 
@@ -105,25 +111,290 @@ prob <- df$A * (0.5*df$X + 0.25*df$X**2) + (1-df$A) * expit(df$X + df$X**2)
 df$Y2 <- rbinom(n=nrow(df), size=1, prob=prob)
 ```
 
-(a) Code your own G-computation estimator following FDA guidance, using the working model `glm(Y ~ X + Z)`.
+(a) Code your own G-computation estimator following FDA guidance, using a logistic regression working model `glm(Y ~ X + Z)`.
 
+(Hint: See page 7 of https://www.fda.gov/media/148910/download .)
+
+(Hint: Read the `type` argument of the `predict.glm` argument.)
+
+*ANSWER*
 ```{r}
+# Step 1: fit a logistic regression model with outcome ~ intercept + treatment + covariates
+mod2a <- glm(Y2 ~ A + X + Z, data=df, family=binomial(link="logit"))
 
+# Put G-computation estimator as a function so we can use it later!
+gComp <- function(model, data){
+  # Step 2 + 4: compute model-based prediction for each person, for   treatment and control
+  dfA0 <- data
+  dfA1 <- data
+  
+  dfA0$A <- 0
+  dfA1$A <- 1
+
+  data$Y_0 <- predict(model, newdata=dfA0, type="response")
+  data$Y_1 <- predict(model, newdata=dfA1, type="response")
+  
+  # Step 3 + 5: average responses under treatment and control
+  # columns
+  mean0 <- mean(data$Y_0)
+  mean1 <- mean(data$Y_1)
+  
+  return(c(mean0, mean1))
+}
+
+# Step 6: use the estimates to get unconditional treatment effect like risk difference
+result2a <- gComp(mod2a, data=df)
 ```
 
-(b) Use `RobinCar` to get mean estimates for both treatment arms, and obtain estimate and CI for the risk difference. (Hint: you can use the "formula" specification for `robincar_glm` and leave out one strata variable, if you include an intercept.)
+(b) Use `RobinCar` to get mean estimates for both treatment arms, and obtain estimate and CI for the risk difference.
 
+(Hint: You may use the "formula" specification for `robincar_glm`.)
+
+*ANSWER*
 ```{r}
+# Mean estimates for both treatment arms
 mod2b <- RobinCar::robincar_glm(
   df=df,
-  treat_col="A", 
+  treat_col="A",
   response_col="Y2",
-  formula="Y2 ~ A + X + Z2 + Z3 + Z4")
+  formula="Y2 ~ A + X + Z",
+  g_family=binomial(link="logit"))
+mod2b$result
+```
+
+```{r}
+# Estimate and CI for risk difference
+contrast2b <- RobinCar::robincar_contrast(
+  mod2b,
+  contrast_h="diff")
+
+contrast2b$result$estimate + c(-1, 0, 1) * qnorm(0.975) * contrast2b$result$se
 ```
 
 (c) Use `RobinCar` to get an estimate and CI for an unconditional odds ratio. Please construct the estimate and CI on the log odds ratio first, and then exponentiate for a better asymptotic approximation.
 
+*ANSWER*
+```{r}
+# Estimate and CI for log odds ratio
+odds <- function(p) p/(1-p)
+contrast2c <- RobinCar::robincar_contrast(
+  mod2b,
+  contrast_h=function(vec) log(odds(vec[2])) - log(odds(vec[1])))
+
+# Calculate result on log odds scale
+res <- contrast2c$result$estimate + c(-1, 0, 1) * qnorm(0.975) * contrast2c$result$se
+
+# Exponentiate point estimate and CI
+exp(res)
+```
+
 ### Question 3. AIPW with Negative Binomial Working Model
+
+Generate simulated data with count outcomes.
+```{r}
+# Generate mean -- negative binomial working model does not hold
+means <- (1-A) * (2*X + 10*X**2) + (A) * (4*X**0.5)
+
+# Generate outcome variable based on probability
+df$Y3 <- rnegbin(n=nrow(df), mu=means, theta=10)
+```
+
+(a) Conduct a small simulation study to show that the G-computation estimator is biased, but AIPW is not. Use the specification `glm(Y ~ X + Z)` with a negative binomial working model. We have included a function below that can simulate one dataset with negative binomial outcomes.
+
+(Hint: G-computation is biased because the working model is misspecified and because a negative binomial working model with unknown dispersion parameter is not a GLM with a canonical link, so prediction unbiasedness does not hold.)
+
+(Hint: You should start by writing an AIPW function, similar to the G-computation function, that corrects for prediction unbiasedness.)
+
+(Hint: To find the true means, you can simulate a really large dataset.)
+
+(Hint: You will want to use `glm.nb` to fit a negative binomial working model.)
+
+```{r}
+# Create a function to simulate data, copied from the code
+# at the beginning of the exercise
+simData <- function(n){
+  
+  X <- runif(n)
+  Z <- cut(X, breaks=c(0, 0.25, 0.5, 0.75, 1.0))
+  Zfactors <- fastDummies::dummy_cols(Z) %>%
+              dplyr::mutate(across(where(is.numeric), as.factor))
+  A <- RobinCar::car_pb(
+    z=Zfactors[, 2:5], 
+    trt_label=c(0, 1),
+    trt_alc=c(1/3, 2/3), 
+    blocksize=6L)
+  
+  # Generate mean -- negative binomial working model does not hold
+  means <- (1-A) * (2*X + 10*X**2) + (A) * (4*X**0.5)
+
+  # Generate outcome variable based on probability
+  Y3 <- rnegbin(n=n, mu=means, theta=10)
+
+  # Put dataset together
+  df <- tibble(
+    A=A, X=X, Z=Z, Y3=Y3)
+  
+  return(df)
+}
+```
+
+*ANSWER*
+
+First, we will code an AIPW estimator. The AIPW estimator for the mean for treatment assignment $a$ is given by:
+$$
+\frac{1}{n} \sum_{i=1}^{n} \hat{\mu}_a(X_i) + \frac{1}{n_a} \sum_{i:A_i=a} (Y_{i} - \hat{\mu}(X_i))
+$$
+The second term is the "bias" term that we are correcting for. In our function, we will compute this bias term, and then add it on, as above. We can use our g-computation function from before, and additionally return the AIPW estimator.
+
+```{r}
+# Code a function that returns both the g-computation and AIPW estimators
+gAIPW <- function(model, data){
+  # Step 2 + 4: compute model-based prediction for each person, for   treatment and control
+  dfA0 <- data
+  dfA1 <- data
+  
+  dfA0$A <- 0
+  dfA1$A <- 1
+
+  data$Y_0 <- predict(model, newdata=dfA0, type="response")
+  data$Y_1 <- predict(model, newdata=dfA1, type="response")
+  
+  # Step 3 + 5: average responses under treatment and control
+  # columns
+  mean0G <- mean(data$Y_0)
+  mean1G <- mean(data$Y_1)
+  
+  # NEW for AIPW -- correct for prediction unbiasedness
+  bias0 <- mean(data$Y3[data$A == 0]) - mean(data$Y_0[data$A == 0])
+  bias1 <- mean(data$Y3[data$A == 1]) - mean(data$Y_1[data$A == 1])
+  
+  mean0AIPW <- mean0G + bias0
+  mean1AIPW <- mean1G + bias1
+  
+  return(c(G0=mean0G, G1=mean1G, AIPW0=mean0AIPW, AIPW1=mean1AIPW))
+}
+```
+
+Now, let's figure out what the true means are.
+
+```{r}
+big <- simData(100000)
+truth <- c(mean(big$Y3[big$A == 0]), mean(big$Y3[big$A == 1]))
+```
+
+Now we want to create several datasets, and use G-computation and AIPW on each one to estimate treatment means. We'll use a sample size of 500. First, let's create a function to run one simulant.
+
+```{r}
+# Create and test function to run the simulation study
+doOne <- function(){
+  
+  # Simulate data
+  dfSim <- simData(1000)
+  
+  # Fit the working model
+  modSim <- glm.nb(Y3 ~ A + X + Z, data=dfSim)
+  
+  # G-computation and AIPW estimators
+  result <- gAIPW(model=modSim, data=dfSim)
+  
+  return(result)
+}
+doOne()
+```
+
+Now we're going to run `doOne` many times, and compare this with the truth. Taking the mean over all of the simulations, we can see that the G0 and G1 means are further from the truth than the AIPW0 and AIPW1 means. This is because we have de-biased them!
+
+```{r}
+simulation <- replicate(200, doOne())
+simresults <- rowMeans(simulation)
+
+# Bias in G-computation
+simresults[1:2] - truth
+
+# Bias in AIPW
+simresults[3:4] - truth
+```
+
+(b) Use `RobinCar` to get an estimate and CI for the 1 - mean ratio using a negative binomial working model with unknown dispersion parameter. Note: if the dispersion parameter `theta` is known, you can specify `g_family=negative.binomial(theta)` in RobinCar. If it is unknown, use `g_family="nb"`.
+
+```{r}
+mod3b <- RobinCar::robincar_glm(
+  df=df,
+  treat_col="A",
+  response_col="Y3",
+  formula="Y3 ~ A + X + Z",
+  g_family="nb")
+
+contrast3b <- RobinCar::robincar_contrast(
+  mod3b,
+  contrast_h=function(theta) 1 - theta[2]/theta[1])
+
+contrast3b$result$estimate + c(-1, 0, 1) * qnorm(0.975) * contrast3b$result$se
+```
 
 ### Question 4. Comparison of Standard Error under Simple versus Covariate-Adaptive Randomization
 
+Repeat 1(b), 2(b), and 3(b) using an appropriate standard error that accounts for covariate-adaptive randomization. You should use the `RobinCar` package. Compare the standard error to simple randomization.
+
+*ANSWER*
+
+First, we re-do the analysis for 1(b) using permuted block as the `car_scheme` in the `RobinCar` call. We compare the variance for the treatment difference contrast and see that the variance accounting for covariate-adaptive randomization is slightly smaller than the variance under simple randomization.
+
+```{r}
+# 1(b)
+
+mod1bCAR <- RobinCar::robincar_glm(
+  df=df, 
+  treat_col="A", 
+  response_col="Y1",
+  covariate_cols=c("X"),
+  strata_cols=c("Z"),
+  adj_method="homogeneous",
+  car_scheme="permuted-block",
+  contrast_h="diff")
+
+# variance under CAR
+mod1bCAR$contrast$varcov
+
+# variance under simple randomization
+mod1b$contrast$varcov
+```
+
+Next, we re-do the analysis for 2(b).
+
+```{r}
+# 2(b)
+
+mod2bCAR <- RobinCar::robincar_glm(
+  df=df,
+  treat_col="A",
+  response_col="Y2",
+  formula="Y2 ~ A + X + Z",
+  strata_cols=c("Z"),
+  car_scheme="permuted-block",
+  g_family=binomial(link="logit"),
+  contrast_h="diff")
+
+# variance under CAR
+mod2bCAR$contrast$varcov
+
+# variance under simple randomization
+contrast2b$varcov
+```
+
+Finally, we re-do the analysis for 3(b). We expect to see the warning that prediction unbiasedness does not hold, which is just letting us know that an AIPW estimator was computed.
+
+```{r}
+mod3bCAR <- RobinCar::robincar_glm(
+  df=df,
+  treat_col="A",
+  response_col="Y3",
+  formula="Y3 ~ A + X + Z",
+  g_family="nb",
+  strata_cols="Z",
+  car_scheme="permuted-block",
+  contrast_h=function(theta) theta[2]/theta[1])
+
+mod3bCAR$contrast$varcov
+contrast3b$varcov
+```
