@@ -10,19 +10,103 @@ output:
 Download and Install the `RobinCar` package by running the code below.
 
 ```{r}
-devtools::install_github("mbannick/RobinCar")
+# devtools::install_github("mbannick/RobinCar")
+library(RobinCar)
 ```
 
 ### Learning Objectives
 
 In this practical, we will apply more advanced covariate adjustment methods to real data sets. In this practical, you will use the `RobinCar` package to apply ANHECOVA, joint calibration, and robust survival methods.
 
-**Objectives:**
+### Setup
+
+We will use the dataset from the `speff2trial` dataset called `ACTG175`.
+
+```{r}
+data <- speff2trial::ACTG175
+data$arms <- as.factor(data$arms) # categorical treatment variable
+data$treat <- as.factor(data$treat) # binary treatment indicator
+```
+
+Please read up on the variables in this dataset, as this will be necessary to complete the exercise: `r ?speff2trial::ACTG175`.
 
 ### Question 1. ANHECOVA
 
+(a) Obtain an estimate of the effect of treatment assignment to group 1, 2, and 3, compared to group 0, on change in CD4 count between baseline and 20 weeks of follow-up using ANHECOVA. Include strata as covariates, and additionally adjust for variables that you think might be important.
+
+*ANSWER*
+```{r}
+# Compute change in CD4 count between baseline and 20 weeks
+data$cd4.change <- as.numeric(data$cd420 - data$cd40)
+
+# Use robincar_glm with the default linear link, heterogeneous working model,
+# including covariate as strata
+mod1a <- robincar_glm(
+  df=data,
+  treat_col="arms",
+  response_col="cd4.change",
+  strata_cols="strat",
+  covariate_cols=c("age", "gender", "wtkg", "hemo", "oprior"),
+  car_scheme="permuted-block",
+  adj_method="heterogeneous",
+  covariate_to_include_strata=TRUE,
+  contrast_h="diff"
+)
+
+mod1a$contrast
+```
+
 ### Question 2. Joint Calibration
 
-### Question 3. Robust Adjustment for Survival Data
+(b) Compute the probability of a change in CD4 count between baseline and 20 weeks of greater than 50% for each treatment group. Include strata as covariates, adjust for additional variables you think may be important, and use a heterogeneous working model.
 
+*ANSWER*
+```{r}
+# Compute the change in CD4 count between baseline and 20 weeks,
+# and indicate if it is a greater than 50% change
+data$cd4.50 <- as.numeric(((data$cd40 - data$cd420)/data$cd40)>0.5)
+
+# Compute treatment means using robincar_glm, heterogeneous working model
+mod2a <- robincar_glm(
+  df=data,
+  treat_col="arms",
+  response_col="cd4.50",
+  strata_cols="strat",
+  covariate_cols=c("age", "gender", "wtkg", "hemo", "oprior"),
+  car_scheme="permuted-block",
+  adj_method="heterogeneous",
+  covariate_to_include_strata=TRUE,
+  g_family=binomial(link="logit"),
+  g_accuracy=7
+)
+```
+
+(b) Use joint calibration on top of the results in (a) to achieve guaranteed efficiency gain asymptotically.
+
+*ANSWER*
+```{r}
+mod2b <- robincar_calibrate(
+  result=mod2a,
+  joint=TRUE
+)
+```
+
+(c) Use the results from (b) to compute the odds ratio of a change in CD4 count between baseline and 20 weeks of greater than 50% comparing all treatment groups 1, 2, and 3, separately to group 0.
+
+(Hint: you may want to use the following function)
+
+```{r}
+# Define odds ratio
+or <- function(vec) (vec[-1]/(1-vec[-1])) / (vec[1]/(1-vec[1]))
+```
+
+*ANSWER*
+```{r}
+contrast2c <- robincar_contrast(
+  result=mod2b,
+  contrast_h=or
+)
+```
+
+### Question 3. Robust Adjustment for Survival Data
 
