@@ -1,8 +1,11 @@
 ---
-title: "Practical 2: Advanced Covariate Adjustment (KEY)"
+title: 'Practical 2: Advanced Covariate Adjustment (KEY)'
+author: "Ting Ye, Marlena Bannick, Yanyao Yi"
 subtitle: "ASA Biopharmaceutical Section Regulatory-Industry Statistics Workshop"
-author: Ting Ye, Marlena Bannick, Yanyao Yi
-output: 
+output:
+  html_document:
+    df_print: paged
+    theme: paper
   html_notebook:
     theme: paper
 ---
@@ -18,6 +21,10 @@ library(RobinCar)
 
 In this practical, we will apply more advanced covariate adjustment methods to real data sets. In this practical, you will use the `RobinCar` package to apply ANHECOVA, joint calibration, and robust survival methods.
 
+* Practice using ANHECOVA and joint calibration methods to achieve guaranteed efficiency gain and universality.
+* Practice using robust, covariate-adjusted methods for hypothesis testing with time-to-event data.
+* Interpret unconditional hazard ratios using robust, covariate-adjusted methods.
+
 ### Setup
 
 We will use the dataset from the `speff2trial` dataset called `ACTG175`.
@@ -28,7 +35,7 @@ data$arms <- as.factor(data$arms) # categorical treatment variable
 data$treat <- as.factor(data$treat) # binary treatment indicator
 ```
 
-Please read up on the variables in this dataset, as this will be necessary to complete the exercise: `r ?speff2trial::ACTG175`.
+Please read about the variables in this dataset, as this will be necessary to complete the exercise: `?speff2trial::ACTG175`. This study used stratified permuted block randomization.
 
 ### Question 1. ANHECOVA
 
@@ -58,7 +65,7 @@ mod1a$contrast
 
 ### Question 2. Joint Calibration
 
-(b) Compute the probability of a change in CD4 count between baseline and 20 weeks of greater than 50% for each treatment group. Include strata as covariates, adjust for additional variables you think may be important, and use a heterogeneous working model.
+(a) Compute the probability of a change in CD4 count between baseline and 20 weeks of greater than 50% for each treatment group. Include strata as covariates, adjust for additional variables you think may be important, and use a heterogeneous working model.
 
 *ANSWER*
 ```{r}
@@ -110,3 +117,86 @@ contrast2c <- robincar_contrast(
 
 ### Question 3. Robust Adjustment for Survival Data
 
+In the next three questions, we will study the time to the first occurrence of any of the following: (i) a decline in CD4 T cell count of at least 50 (ii) an event indicating progression to AIDS, or (iii) death. We will refer to this as the "event".
+
+We will focus on comparing treatment arm 1 (zidovudine and didanosine) to treatment arm 0 (zidovudine). The treatment allocation proportion is 0.5.
+
+(a) Use `RobinCar` to perform a robust Cox score test of whether the number of days until the event differs between individuals randomized to zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring.
+
+(Hint: look at the `cens` and `days` variables)
+
+*ANSWER*
+```{r}
+# Subset the data to only those in treatment groups 1 and 0
+data01 <- data[data$arms %in% c(0, 1),]
+data01$days <- as.numeric(data01$days)
+
+# Perform robust Coxscore test
+test3a <- robincar_coxscore(
+  df=data01,
+  treat_col="treat",
+  response_col="days",
+  event_col="cens",
+  strata_cols="strat",
+  covariate_cols=c("age", "gender", "wtkg", "hemo", "oprior"),
+  car_scheme="permuted-block",
+  ref_arm=0,
+  p_trt=0.5
+)
+
+test3a
+```
+
+(b) Repeat (a), but use a covariate-adjusted, stratified logrank test.
+
+*ANSWER*
+```{r}
+# Perform a covariate-adjusted, stratified logrank test
+test3b <- robincar_logrank(
+  df=data01,
+  treat_col="treat",
+  response_col="days",
+  event_col="cens",
+  strata_cols="strat",
+  covariate_cols=c("age", "gender", "wtkg", "hemo", "oprior"),
+  car_scheme="permuted-block",
+  ref_arm=0,
+  p_trt=0.5,
+  adj_method="CSL"
+)
+
+test3b
+```
+
+(c) Use `RobinCar` to obtain an estimate and CI for the unconditional hazard ratio of the event between individuals receiving zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring.
+
+*ANSWER*
+```{r}
+# Obtain a covariate-adjusted hazard ratio
+mod3c <- robincar_covhr(
+  df=data01,
+  treat_col="treat",
+  response_col="days",
+  event_col="cens",
+  strata_cols="strat",
+  covariate_cols=c("age", "gender", "wtkg", "hemo", "oprior"),
+  car_scheme="permuted-block",
+  ref_arm=0,
+  p_trt=0.5,
+  adj_method="CSL"
+)
+
+mod3c
+```
+
+(d) Provide an interpretation of the estimate in (c).
+
+*ANSWER*
+
+The hazard of the first occurrence of (i) a decline in CD4 T cell count of at least 50 (ii) an event indicating progression to AIDS, or (iii) death for individuals randomized to zidovidine and didanosine is reduced by 51% compared to individuals randomized to zidovidine alone.
+
+(e) What assumptions does your interpretation in (d) require?
+
+*ANSWER*
+
+The interpretation requires that the unconditional hazards of the event for the zidovidine and didanosine and the zidovidine alone treatment groups are proportional.
