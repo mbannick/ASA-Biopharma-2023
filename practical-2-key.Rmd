@@ -39,9 +39,10 @@ Please read about the variables in this dataset, as this will be necessary to co
 
 ### Question 1. ANHECOVA
 
-(a) Obtain an estimate of the effect of treatment assignment to group 1, 2, and 3, compared to group 0, on change in CD4 count between baseline and 20 weeks of follow-up using ANHECOVA. Include strata as covariates, and additionally adjust for variables that you think might be important.
+(a) Obtain an estimate of the effect of treatment assignment to group 1, 2, and 3, compared to group 0, on change in CD4 count between baseline and 20 weeks of follow-up using ANHECOVA. Include strata as covariates, and additionally adjust for variables that you think might be important. What is the model being fit?
 
 *ANSWER*
+
 ```{r}
 # Compute change in CD4 count between baseline and 20 weeks
 data$cd4.change <- as.numeric(data$cd420 - data$cd40)
@@ -60,14 +61,17 @@ mod1a <- robincar_glm(
   contrast_h="diff"
 )
 
-mod1a$contrast
+mod1a$contrast$result
 ```
+
+The exact model being fit can be viewed with `mod1a$main$mod`. With $Y$ as the CD4 change, $A$ as the treatment group, $X$ as the chosen covariates, and $Z$ as the strata, we are fitting the working model `lm(Y ~ A * (X + Z))`: strata are included as covariates, and there are interactions between covariates and treatment.
 
 ### Question 2. Joint Calibration
 
-(a) Compute the probability of a change in CD4 count between baseline and 20 weeks of greater than 50% for each treatment group. Include strata as covariates, adjust for additional variables you think may be important, and use a heterogeneous working model.
+(a) Compute the probability of a change in CD4 count between baseline and 20 weeks of greater than 50% for each treatment group. Include strata as covariates, adjust for additional variables you think may be important, and use a heterogeneous working model. What is the model being fit?
 
 *ANSWER*
+
 ```{r}
 # Compute the change in CD4 count between baseline and 20 weeks,
 # and indicate if it is a greater than 50% change
@@ -86,9 +90,12 @@ mod2a <- robincar_glm(
   g_family=binomial(link="logit"),
   g_accuracy=7
 )
+mod2a$result
 ```
 
-(b) Use joint calibration on top of the results in (a) to achieve guaranteed efficiency gain asymptotically.
+The exact model being fit can be viewed with `mod2a$mod`. With $Y$ as the indicator of CD4 change, $A$ as the treatment group, $X$ as the chosen covariates, and $Z$ as the strata, we are fitting the *binomial* working model `glm(Y ~ A * (X + Z))`: strata are included as covariates, and there are interactions between covariates and treatment.
+
+(b) Use joint calibration on top of the results in (a) to achieve guaranteed efficiency gain asymptotically. What is the model being fit?
 
 *ANSWER*
 ```{r}
@@ -98,21 +105,30 @@ mod2b <- robincar_calibrate(
 )
 ```
 
-(c) Use the results from (b) to compute the odds ratio of a change in CD4 count between baseline and 20 weeks of greater than 50% comparing all treatment groups 1, 2, and 3, separately to group 0.
+The exact model being fit can be viewed with `mod2b$mod`. With $Y$ as the indicator of CD4 change, $A$ as the treatment group, $\mu$ as the predicted potential outcomes from part (a), and $Z$ as the strata, we are fitting the *binomial* working model `glm(Y ~ A * (\mu + Z))`: strata are included as covariates, and there are interactions between the potential outcome covariates $\mu$ and strata with treatment.
+
+(c) Use the results from (b) to compute the odds ratio and CI for a change in CD4 count between baseline and 20 weeks of greater than 50% comparing all treatment groups 1, 2, and 3, separately to group 0. Please compute these on the log odds scale and exponentiate to get a better asymptotic approximation.
 
 (Hint: you may want to use the following function)
 
 ```{r}
-# Define odds ratio
-or <- function(vec) (vec[-1]/(1-vec[-1])) / (vec[1]/(1-vec[1]))
+# Transformation for log odds ratio
+odds <- function(p) p/(1-p)
+lor <- function(vec) log(odds(vec[2:4])) - log(odds(vec[1]))
 ```
 
 *ANSWER*
 ```{r}
 contrast2c <- robincar_contrast(
   result=mod2b,
-  contrast_h=or
+  contrast_h=lor
 )
+
+# Calculate result on log odds scale
+res <- contrast2c$result$estimate + matrix(rep(c(-1, 0, 1), 3), byrow=T, nrow=3) * qnorm(0.975) * contrast2c$result$se
+
+# Exponentiate point estimate and CI
+exp(res)
 ```
 
 ### Question 3. Robust Adjustment for Survival Data
@@ -121,7 +137,7 @@ In the next three questions, we will study the time to the first occurrence of a
 
 We will focus on comparing treatment arm 1 (zidovudine and didanosine) to treatment arm 0 (zidovudine). The treatment allocation proportion is 0.5.
 
-(a) Use `RobinCar` to perform a robust Cox score test of whether the number of days until the event differs between individuals randomized to zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring.
+(a) Use `RobinCar` to perform a robust Cox score test of whether the number of days until the event differs between individuals randomized to zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring. What is the null hypothesis?
 
 (Hint: look at the `cens` and `days` variables)
 
@@ -147,7 +163,9 @@ test3a <- robincar_coxscore(
 test3a
 ```
 
-(b) Repeat (a), but use a covariate-adjusted, stratified logrank test.
+The null hypothesis is that the conditional hazard functions between treatment groups, conditional on the chosen covariates, are the same. This test assumes that the censoring and event times are independent, conditional on treatment group assignment and the chosen covariates. It also assumes that the ratio of the conditional censoring distributions between the treatment groups, conditional on covariates, is not a function of the covariates.
+
+(b) Repeat (a), but use a covariate-adjusted, stratified logrank test. What is the null hypothesis and the censoring assumption?
 
 *ANSWER*
 ```{r}
@@ -168,7 +186,10 @@ test3b <- robincar_logrank(
 test3b
 ```
 
-(c) Use `RobinCar` to obtain an estimate and CI for the unconditional hazard ratio of the event between individuals receiving zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring.
+The null hypothesis is that the unconditional and strata-specific hazard functions between treatment groups are the same. This test assumes that the censoring and event times are independent, conditional on treatment group assignment and strata.
+
+(c) Use `RobinCar` to obtain an estimate and CI for the unconditional hazard ratio of the event between individuals receiving zidovidine and didanosine versus zidavodine alone, adjusting for relevant covariates and accounting for strata and censoring. Provide an interpretation of the estimate.
+What assumptions does your interpretation in require?
 
 *ANSWER*
 ```{r}
@@ -186,17 +207,10 @@ mod3c <- robincar_covhr(
   adj_method="CSL"
 )
 
-mod3c
+# Get estimate and CI
+exp(mod3c$result$theta_CL + c(-1, 0, 1) * qnorm(0.975) * mod3c$result$se_theta_CL)
 ```
 
-(d) Provide an interpretation of the estimate in (c).
+*Interpretation*: The hazard of the first occurrence of (i) a decline in CD4 T cell count of at least 50 (ii) an event indicating progression to AIDS, or (iii) death for individuals randomized to zidovidine and didanosine is reduced by 51% compared to individuals randomized to zidovidine alone.
 
-*ANSWER*
-
-The hazard of the first occurrence of (i) a decline in CD4 T cell count of at least 50 (ii) an event indicating progression to AIDS, or (iii) death for individuals randomized to zidovidine and didanosine is reduced by 51% compared to individuals randomized to zidovidine alone.
-
-(e) What assumptions does your interpretation in (d) require?
-
-*ANSWER*
-
-The interpretation requires that the unconditional hazards of the event for the zidovidine and didanosine and the zidovidine alone treatment groups are proportional.
+*Assumption*: The interpretation requires that the unconditional hazards of the event for the zidovidine and didanosine and the zidovidine alone treatment groups are proportional.
